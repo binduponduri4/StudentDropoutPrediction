@@ -1,77 +1,80 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix
-from sklearn.ensemble import RandomForestClassifier
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-st.set_page_config(page_title="Student Graduation Predictor", layout="centered")
+st.title("🎓 Student Graduation Prediction App")
 
-st.title("🎓 Student Graduation Prediction")
+uploaded_file = st.file_uploader("📁 Upload your CSV file", type=["csv"])
 
-# Load dataset from local file
-df = pd.read_csv("dataset.csv")
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    
+    st.subheader("📄 Raw Data")
+    st.dataframe(df)
 
-# Filter and prepare the target column
-df = df[df['Target'] != 'Enrolled']
-df['Target'] = df['Target'].map({'Graduate': 1, 'Dropout': 0})
+    # Preprocess
+    df = df[df['Target'] != 'Enrolled']
+    df['Target'] = df['Target'].map({'Graduate': 1, 'Dropout': 0})
 
-# Split features and labels
-X = df.drop(['Target'], axis=1)
-Y = df['Target']
+    X = df.drop(['Target'], axis=1)
+    Y = df['Target']
 
-# Feature importance with Random Forest
-rf = RandomForestClassifier(random_state=42)
-rf.fit(X, Y)
-importances = rf.feature_importances_
-feature_scores = pd.Series(importances, index=X.columns).sort_values(ascending=False)
+    # Train-test split
+    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
 
-# Top 10 features
-top_10_features = feature_scores.head(10).index.tolist()
-X_top = X[top_10_features]
+    # Train model
+    model = LogisticRegression(max_iter=4000)
+    model.fit(X_train, Y_train)
 
-# Train model
-X_train, X_test, Y_train, Y_test = train_test_split(X_top, Y, test_size=0.2, random_state=42)
-model = LogisticRegression(max_iter=4000)
-model.fit(X_train, Y_train)
+    # Evaluate
+    pred = model.predict(X_test)
+    accuracy = accuracy_score(pred, Y_test) * 100
+    cm = confusion_matrix(pred, Y_test)
 
-# Accuracy and Confusion Matrix
-pred = model.predict(X_test)
-accuracy = accuracy_score(Y_test, pred) * 100
-cm = confusion_matrix(Y_test, pred)
+    st.subheader("📊 Model Performance")
+    st.write(f"**Accuracy Score:** {accuracy:.2f}%")
+    st.write("**Confusion Matrix:**")
+    st.write(cm)
 
-# Show performance
-st.subheader("📊 Model Performance")
-st.write(f"**Accuracy Score:** {accuracy:.2f}%")
+    # Feature Importance
+    importance = np.abs(model.coef_[0])
+    feature_importance = pd.DataFrame({
+        'Feature': X.columns,
+        'Importance': importance
+    }).sort_values(by='Importance', ascending=False)
 
-fig, ax = plt.subplots()
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Dropout', 'Graduate'], yticklabels=['Dropout', 'Graduate'])
-plt.xlabel("Predicted")
-plt.ylabel("Actual")
-st.pyplot(fig)
+    st.subheader("🔍 Feature Importance (Table)")
+    st.dataframe(feature_importance)
 
-# Feature Importance Plot
-st.subheader("🔍 Top 10 Important Features")
-st.bar_chart(feature_scores.head(10))
+    st.subheader("📈 Feature Importance (Bar Chart)")
+    plt.figure(figsize=(10, 8))
+    sns.barplot(x='Importance', y='Feature', data=feature_importance.head(15), palette="viridis")
+    plt.title("Top 15 Most Important Features")
+    st.pyplot(plt)
 
-# Input section
-st.subheader("🧮 Predict for New Student (Top 10 Inputs Only)")
+    # Prediction section
+    st.subheader("🧮 Predict for New Student")
 
-input_data = []
-for feature in top_10_features:
-    unique_vals = sorted(df[feature].dropna().unique())
-    if len(unique_vals) <= 5:
-        val = st.selectbox(f"Select {feature}:", unique_vals)
-    else:
-        val = st.number_input(f"Enter {feature}:", value=float(df[feature].mean()))
-    input_data.append(val)
+    input_data = []
+    input_labels = list(X.columns)
 
-# Predict button
-if st.button("🎯 Predict"):
-    input_array = np.array(input_data).reshape(1, -1)
-    prediction = model.predict(input_array)
-    result = "Graduate 🎓" if prediction[0] == 1 else "Dropout ❌"
-    st.success(f"The student is likely to: **{result}**")
+    for label in input_labels:
+        val = st.number_input(f"Enter {label}:", value=0.0)
+        input_data.append(val)
+
+    if st.button("🔮 Predict"):
+        new_data = np.array([input_data])
+
+        if len(new_data[0]) != X.shape[1]:
+            st.error(f"Expected {X.shape[1]} inputs, but got {len(new_data[0])}.")
+        else:
+            label = model.predict(new_data)
+            if label[0] == 0:
+                st.success("❌ The student is likely to **Dropout**.")
+            else:
+                st.success("✅ The student is likely to **Graduate**.")
