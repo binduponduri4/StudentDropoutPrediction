@@ -1,70 +1,77 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.ensemble import RandomForestClassifier
 
-st.title("Student Graduation Prediction")
+st.set_page_config(page_title="Student Graduation Predictor", layout="centered")
 
-uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
+st.title("🎓 Student Graduation Prediction")
 
-if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
-    
-    st.subheader("Raw Data")
-    st.dataframe(df)
+# Load dataset from local file
+df = pd.read_csv("dataset.csv")
 
-    df = df[df['Target'] != 'Enrolled']
-    df['Target'] = df['Target'].map({'Graduate': 1, 'Dropout': 0})
+# Filter and prepare the target column
+df = df[df['Target'] != 'Enrolled']
+df['Target'] = df['Target'].map({'Graduate': 1, 'Dropout': 0})
 
-    X = df.drop(['Target'], axis=1)
-    Y = df['Target']
+# Split features and labels
+X = df.drop(['Target'], axis=1)
+Y = df['Target']
 
-    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
+# Feature importance with Random Forest
+rf = RandomForestClassifier(random_state=42)
+rf.fit(X, Y)
+importances = rf.feature_importances_
+feature_scores = pd.Series(importances, index=X.columns).sort_values(ascending=False)
 
-    model = LogisticRegression(max_iter=4000)
-    model.fit(X_train, Y_train)
+# Top 10 features
+top_10_features = feature_scores.head(10).index.tolist()
+X_top = X[top_10_features]
 
-    pred = model.predict(X_test)
-    accuracy = accuracy_score(pred, Y_test) * 100
-    cm = confusion_matrix(pred, Y_test)
+# Train model
+X_train, X_test, Y_train, Y_test = train_test_split(X_top, Y, test_size=0.2, random_state=42)
+model = LogisticRegression(max_iter=4000)
+model.fit(X_train, Y_train)
 
-    st.subheader("Model Performance")
-    st.write(f"Accuracy Score: **{accuracy:.2f}%**")
-    st.write("Confusion Matrix:")
-    st.write(cm)
+# Accuracy and Confusion Matrix
+pred = model.predict(X_test)
+accuracy = accuracy_score(Y_test, pred) * 100
+cm = confusion_matrix(Y_test, pred)
 
-    st.subheader("Predict for New Data")
+# Show performance
+st.subheader("📊 Model Performance")
+st.write(f"**Accuracy Score:** {accuracy:.2f}%")
 
-    input_data = []
-    input_labels = [
-        "Marital Status", "Age at enrollment", "International Student (1-yes/0-no)", "Curricular Units 1st sem (credited)",
-        "Gender (1-Male/0-Female)", "Scholarship Holder (1-yes/0-no)", "Curricular Units 2nd sem (credited)",
-        "Displaced", "Educational Special Needs", "Debtor", "Tuition fees up to date", "Gender (again if needed)", 
-        "Unemployment Rate", "Previous Qualification (0-none/1-yes)", "Previous Qualification Grade", 
-        "Application Mode", "Application Order", "Mother Qualification", "Father Qualification",
-        "Admission Grade", "Displaced Again", "Previous Qualification (yes/no again)", "Mother Occupation",
-        "Father Occupation", "Curricular Units 1st sem (enrolled)", "Curricular Units 1st sem (approved)",
-        "Curricular Units 2nd sem (enrolled)", "Curricular Units 2nd sem (approved)",
-        "Curricular Units 1st sem (grade)", "Curricular Units 2nd sem (grade)", 
-        "Curricular Units 2nd sem (evaluations)", "Curricular Units 1st sem (evaluations)", 
-        "Average Grade", "Unemployment rate change", "GDP"
+fig, ax = plt.subplots()
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Dropout', 'Graduate'], yticklabels=['Dropout', 'Graduate'])
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+st.pyplot(fig)
 
-    ]
+# Feature Importance Plot
+st.subheader("🔍 Top 10 Important Features")
+st.bar_chart(feature_scores.head(10))
 
-    for label in input_labels:
-        val = st.number_input(f"Enter {label}:", value=0.0)
-        input_data.append(val)
+# Input section
+st.subheader("🧮 Predict for New Student (Top 10 Inputs Only)")
 
-    if st.button("Predict"):
-        new_data = np.array([input_data])
+input_data = []
+for feature in top_10_features:
+    unique_vals = sorted(df[feature].dropna().unique())
+    if len(unique_vals) <= 5:
+        val = st.selectbox(f"Select {feature}:", unique_vals)
+    else:
+        val = st.number_input(f"Enter {feature}:", value=float(df[feature].mean()))
+    input_data.append(val)
 
-        if len(new_data[0]) != X.shape[1]:
-            st.error(f"Expected {X.shape[1]} features but got {len(new_data[0])}. Please enter correct number of inputs.")
-        else:
-            label = model.predict(new_data)
-            if label[0] == 0:
-                st.success("The student is likely to Dropout.")
-            else:
-                st.success("The student is likely to Graduate.")
+# Predict button
+if st.button("🎯 Predict"):
+    input_array = np.array(input_data).reshape(1, -1)
+    prediction = model.predict(input_array)
+    result = "Graduate 🎓" if prediction[0] == 1 else "Dropout ❌"
+    st.success(f"The student is likely to: **{result}**")
