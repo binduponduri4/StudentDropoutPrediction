@@ -1,77 +1,92 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-st.set_page_config(page_title="Student Graduation Predictor", layout="centered")
-st.title("🎓 Student Graduation Prediction")
+st.title("🎓 Student Graduation Prediction (Top 10 Features)")
 
-# Load dataset
-df = pd.read_csv("dataset.csv")
+# ✅ Step 1: Load static dataset (no upload needed)
+df = pd.read_csv("dataset.csv")  # <-- ensure dataset.csv is in same directory
 
-# Filter for only Dropout and Graduate
+st.subheader("📄 Raw Data")
+st.dataframe(df)
+
+# ✅ Step 2: Preprocessing
 df = df[df['Target'] != 'Enrolled']
 df['Target'] = df['Target'].map({'Graduate': 1, 'Dropout': 0})
 
-# Split features and target
 X_full = df.drop(['Target'], axis=1)
-y = df['Target']
+Y = df['Target']
 
-# Get feature importances
-rf = RandomForestClassifier(random_state=42)
-rf.fit(X_full, y)
-importances = rf.feature_importances_
-importance_series = pd.Series(importances, index=X_full.columns).sort_values(ascending=False)
+# ✅ Step 3: Train temporary model for feature selection
+temp_model = LogisticRegression(max_iter=4000)
+temp_model.fit(X_full, Y)
 
-# Get top 10 important features
-top_10_features = list(importance_series.head(10).index)
+importance = np.abs(temp_model.coef_[0])
+feature_importance = pd.DataFrame({
+    'Feature': X_full.columns,
+    'Importance': importance
+}).sort_values(by='Importance', ascending=False)
 
-# Maintain original dataset column order
-ordered_top_10 = [col for col in df.columns if col in top_10_features]
+# Get top 10 features by importance
+top_10_important = feature_importance['Feature'].head(10).tolist()
 
-# Train model on top 10 features
-X = df[ordered_top_10]
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# ✅ Preserve original dataset order for the selected top 10
+top_10_ordered = [col for col in X_full.columns if col in top_10_important]
 
-model = LogisticRegression(max_iter=3000)
-model.fit(X_train, y_train)
+st.subheader("🔝 Top 10 Most Important Features (in Dataset Order)")
+st.write(top_10_ordered)
 
-# Model accuracy
+# ✅ Step 4: Use top 10 ordered features
+X = X_full[top_10_ordered]
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
+
+model = LogisticRegression(max_iter=4000)
+model.fit(X_train, Y_train)
+
+# ✅ Step 5: Evaluation
+pred = model.predict(X_test)
+accuracy = accuracy_score(pred, Y_test) * 100
+cm = confusion_matrix(pred, Y_test)
+
 st.subheader("📊 Model Performance")
-acc = accuracy_score(y_test, model.predict(X_test)) * 100
-st.write(f"**Accuracy Score:** {acc:.2f}%")
+st.write(f"**Accuracy Score:** {accuracy:.2f}%")
+st.write("**Confusion Matrix:**")
+st.write(cm)
 
-# Confusion matrix
-cm = confusion_matrix(y_test, model.predict(X_test))
-fig, ax = plt.subplots()
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Dropout', 'Graduate'], yticklabels=['Dropout', 'Graduate'])
-plt.xlabel("Predicted")
-plt.ylabel("Actual")
-st.pyplot(fig)
+# ✅ Step 6: Feature Importance Chart
+st.subheader("📈 Feature Importance (Top 10)")
+plt.figure(figsize=(10, 6))
+sns.barplot(x='Importance', y='Feature', data=feature_importance.head(10), palette="mako")
+plt.title("Top 10 Feature Importance")
+st.pyplot(plt)
 
-# Feature importance chart
-st.subheader("🔍 Top 10 Features by Importance")
-st.bar_chart(importance_series.head(10))
-
-# User input
+# ✅ Step 7: New prediction input
 st.subheader("🧮 Predict for New Student (Top 10 Inputs Only)")
-input_data = []
-for feature in ordered_top_10:
-    unique_vals = sorted(df[feature].dropna().unique())
-    if len(unique_vals) <= 5:
-        val = st.selectbox(f"Select {feature}:", unique_vals)
-    else:
-        val = st.number_input(f"Enter {feature}:", value=float(df[feature].mean()))
-    input_data.append(val)
 
-# Predict button
-if st.button("🎯 Predict"):
-    input_array = np.array(input_data).reshape(1, -1)
-    prediction = model.predict(input_array)
-    result = "Graduate 🎓" if prediction[0] == 1 else "Dropout ❌"
-    st.success(f"The student is likely to: **{result}**")
+input_data = []
+for label in top_10_ordered:
+    unique_vals = df[label].dropna().unique()
+
+    if len(unique_vals) <= 5:
+        options = sorted(unique_vals.tolist())
+        selected_val = st.selectbox(f"Select {label}:", options)
+        input_data.append(selected_val)
+    else:
+        val = st.number_input(f"Enter {label}:", value=float(df[label].mean()))
+        input_data.append(val)
+
+if st.button("🔮 Predict"):
+    new_data = np.array([input_data])
+    if len(new_data[0]) != len(top_10_ordered):
+        st.error(f"Expected {len(top_10_ordered)} features, but got {len(new_data[0])}")
+    else:
+        label = model.predict(new_data)
+        if label[0] == 0:
+            st.success("❌ The student is likely to **Dropout**.")
+        else:
+            st.success("✅ The student is likely to **Graduate**.")
