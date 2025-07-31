@@ -1,15 +1,15 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
-from xgboost import XGBClassifier
 
-st.set_page_config(page_title="Student Graduation Prediction", layout="wide")
-st.title("🎓 Student Graduation Prediction (XGBoost Enhanced)")
+st.set_page_config(page_title="Student Graduation Prediction", layout="centered")
+st.title("🎓 Student Graduation Prediction (Top 15 Features)")
 
 # ✅ Load static dataset
 df = pd.read_csv("dataset.csv")
@@ -17,54 +17,44 @@ df = pd.read_csv("dataset.csv")
 st.subheader("📄 Raw Data")
 st.dataframe(df)
 
-# ✅ Clean + Encode
+# ✅ Clean & preprocess
 df = df[df['Target'] != 'Enrolled']
 df['Target'] = df['Target'].map({'Graduate': 1, 'Dropout': 0})
 
 X_full = df.drop('Target', axis=1)
 Y = df['Target']
 
-# ✅ Scale features
+# ✅ Feature selection using RandomForest
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X_full)
 
-# ✅ Use XGBoost for feature importance
-xgb_temp = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
-xgb_temp.fit(X_scaled, Y)
+rf = RandomForestClassifier(n_estimators=100, random_state=42)
+rf.fit(X_scaled, Y)
 
-# ✅ Get top 10 features
-importance = xgb_temp.feature_importances_
+importances = rf.feature_importances_
 feature_importance = pd.DataFrame({
     'Feature': X_full.columns,
-    'Importance': importance
+    'Importance': importances
 }).sort_values(by='Importance', ascending=False)
 
-top_10_features = feature_importance['Feature'].head(10).tolist()
-top_10_features = [col for col in X_full.columns if col in top_10_features]  # preserve original order
+top_15_features = feature_importance['Feature'].head(15).tolist()
 
-st.subheader("🔝 Top 10 Features Used")
-st.write(top_10_features)
+# Preserve dataset order
+top_15_features = [col for col in X_full.columns if col in top_15_features]
 
-# ✅ Prepare final training data
-X_top = X_full[top_10_features]
-X_top_scaled = scaler.fit_transform(X_top)
-X_train, X_test, Y_train, Y_test = train_test_split(X_top_scaled, Y, test_size=0.2, random_state=42)
+st.subheader("🔝 Top 15 Features Used")
+st.write(top_15_features)
 
-# ✅ Final model: XGBoost
-model = XGBClassifier(
-    use_label_encoder=False,
-    eval_metric='logloss',
-    n_estimators=150,
-    max_depth=5,
-    learning_rate=0.1,
-    subsample=0.9,
-    colsample_bytree=0.8,
-    scale_pos_weight=(Y == 0).sum() / (Y == 1).sum(),  # for imbalance
-    random_state=42
-)
+# ✅ Train model with selected features
+X_selected = X_full[top_15_features]
+X_scaled_selected = scaler.fit_transform(X_selected)
+
+X_train, X_test, Y_train, Y_test = train_test_split(X_scaled_selected, Y, test_size=0.2, random_state=42)
+
+model = RandomForestClassifier(n_estimators=200, max_depth=10, random_state=42)
 model.fit(X_train, Y_train)
 
-# ✅ Evaluate
+# ✅ Model Evaluation
 Y_pred = model.predict(X_test)
 report = classification_report(Y_test, Y_pred, output_dict=True)
 cm = confusion_matrix(Y_test, Y_pred)
@@ -75,34 +65,36 @@ st.write(f"**Precision (Graduate):** {report['1']['precision']:.2f}")
 st.write(f"**Recall (Graduate):** {report['1']['recall']:.2f}")
 st.write(f"**F1 Score (Graduate):** {report['1']['f1-score']:.2f}")
 st.write("Confusion Matrix:")
-st.write(cm)
+st.dataframe(pd.DataFrame(cm, index=["Actual: Dropout", "Actual: Graduate"], columns=["Predicted: Dropout", "Predicted: Graduate"]))
 
-# ✅ Feature importance plot
-st.subheader("📈 Feature Importance")
+# ✅ Plot Feature Importance
+st.subheader("📈 Feature Importance (Top 15)")
 plt.figure(figsize=(10, 6))
-sns.barplot(x='Importance', y='Feature', data=feature_importance.head(10), palette="viridis")
-plt.title("Top 10 Feature Importance (XGBoost)")
+sns.barplot(x='Importance', y='Feature', data=feature_importance.head(15), palette="viridis")
 st.pyplot(plt)
 
-# ✅ Prediction Input
-st.subheader("🧮 Predict New Student Outcome")
-
+# ✅ User input
+st.subheader("🧮 Predict for New Student (Top 15 Features Only)")
 input_data = []
-for label in top_10_features:
-    unique_vals = df[label].dropna().unique()
-    if len(unique_vals) <= 5:
-        val = st.selectbox(f"Select {label}:", sorted(unique_vals.tolist()))
-    else:
-        val = st.number_input(f"Enter {label}:", value=float(df[label].mean()))
-    input_data.append(val)
 
-if st.button("🔮 Predict"):
+for feature in top_15_features:
+    unique_vals = df[feature].dropna().unique()
+    if len(unique_vals) <= 5:
+        selected = st.selectbox(f"Select {feature}:", sorted(unique_vals.tolist()))
+        input_data.append(selected)
+    else:
+        default_val = float(df[feature].mean())
+        val = st.number_input(f"Enter {feature}:", value=default_val)
+        input_data.append(val)
+
+# ✅ Predict
+if st.button("🔮 Predict Graduation Status"):
     input_array = np.array([input_data])
     input_scaled = scaler.transform(input_array)
     prediction = model.predict(input_scaled)[0]
-    confidence = model.predict_proba(input_scaled)[0]
+    confidence = model.predict_proba(input_scaled)[0][prediction] * 100
 
     if prediction == 1:
-        st.success(f"✅ Likely to Graduate (Confidence: {confidence[1]*100:.2f}%)")
+        st.success(f"✅ The student is likely to **Graduate** (Confidence: {confidence:.2f}%)")
     else:
-        st.error(f"❌ Likely to Dropout (Confidence: {confidence[0]*100:.2f}%)")
+        st.error(f"❌ The student is likely to **Dropout** (Confidence: {confidence:.2f}%)")
